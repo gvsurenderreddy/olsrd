@@ -187,7 +187,9 @@ endif
 LIBS +=		$(OS_LIB_PTHREAD)
 
 ifeq ($(OS),linux)
-LIBS +=		-lnl -lnl-genl -lnl-route
+LIBS += $(shell pkg-config --libs libnl-3.0)
+LIBS += $(shell pkg-config --libs libnl-genl-3.0)
+LIBS += $(shell pkg-config --libs libnl-route-3.0)
 endif
 
 # extra options from the outside
@@ -233,7 +235,7 @@ CPPFLAGS +=	-DNODEBUG
 endif
 
 ifeq ($(OS),linux)
-CPPFLAGS+=-DLINUX_NL80211 -DHTTPINFO_PUD -I$(TOPDIR)/lib -I$(TOPDIR)/lib/pud/nmealib/include -I$(TOPDIR)/lib/pud/wireformat/include
+CPPFLAGS+=-DLINUX_NL80211 $(shell pkg-config --cflags libnl-3.0) -DHTTPINFO_PUD -I$(TOPDIR)/lib -I$(TOPDIR)/lib/pud/nmealib/include -I$(TOPDIR)/lib/pud/wireformat/include
 endif
 
 # a make function to quote "/" and "."
