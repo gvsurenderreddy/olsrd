@@ -157,7 +157,7 @@ static size_t outbuffer_written[MAX_CLIENTS];
 static int outbuffer_socket[MAX_CLIENTS];
 static int outbuffer_count;
 
-char uuid[UUIDLEN];
+char uuid[UUIDLEN + 1];
 char uuidfile[FILENAME_MAX];
 
 static struct timeval start_time;
@@ -422,8 +422,10 @@ read_uuid_from_file(const char *file)
 {
   FILE *f;
   char* end;
+  int r = 0;
+  size_t chars;
 
-  *uuid = 0;
+  memset(uuid, 0, sizeof(uuid));
 
   f = fopen(file, "r");
   olsr_printf(1, "(JSONINFO) Reading UUID from '%s'\n", file);
@@ -432,21 +434,23 @@ read_uuid_from_file(const char *file)
                 file, strerror(errno));
     return -1;
   }
-  if (fread(uuid, 1, UUIDLEN, f) > 0) {
-    fclose(f);
+  chars = fread(uuid, 1, UUIDLEN, f);
+  if (chars > 0) {
+    uuid[chars] = '\0'; /* null-terminate the string */
+
     /* we only use the first line of the file */
     end = strchr(uuid, '\n');
     if(end)
       *end = 0;
-    return 0;
+    r = 0;
   } else {
     olsr_printf(1, "(JSONINFO) Could not read UUID from '%s': %s\n",
                 file, strerror(errno));
-    return -1;
+    r = -1;
   }
 
   fclose(f);
-  return 1;
+  return r;
 }
 
 static void
@@ -772,14 +776,14 @@ ipc_print_gateways(struct autobuf *abuf)
     }
 
     if (gw == olsr_get_inet_gateway(false)) {
-      v4 = autoV4 ? "auto" : "s";
+      v4 = "s";
     } else if (gw->ipv4 && (olsr_cnf->ip_version == AF_INET || olsr_cnf->use_niit)
                && (olsr_cnf->smart_gw_allow_nat || !gw->ipv4nat)) {
       v4 = "u";
     }
 
     if (gw == olsr_get_inet_gateway(true)) {
-      v6 = autoV6 ? "auto" : "s";
+      v6 = "s";
     } else if (gw->ipv6 && olsr_cnf->ip_version == AF_INET6) {
       v6 = "u";
     }
@@ -1125,7 +1129,7 @@ ipc_print_interfaces(struct autobuf *abuf)
 #ifdef __linux__
     snprintf(path, PATH_MAX, "/sys/class/net/%s/device/driver/module", ifs->name);
     linklen = readlink(path, linkpath, PATH_MAX - 1);
-    if (linkpath != NULL && linklen > 1) {
+    if (linklen > 1) {
       linkpath[linklen] = '\0';
       abuf_json_string(abuf, "kernelModule", basename(linkpath));
     }

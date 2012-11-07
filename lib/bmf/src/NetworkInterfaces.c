@@ -362,7 +362,7 @@ int DeactivateSpoofFilter(void)
     return 0;
   }
 
-  EthTapSpoofState = fgetc(procSpoof);
+  EthTapSpoofState = (char)fgetc(procSpoof);
   fclose(procSpoof);
 
   /* Open procfile for writing */
@@ -861,7 +861,7 @@ void FindNeighbors(
             "%s: ----> not forwarding to %s: \"%s\" gives a better link to this neighbor, costing %s\n",
             PLUGIN_NAME_SHORT,
             olsr_ip_to_string(&buf, &walker->neighbor_iface_addr),
-            bestIntf->int_name,
+            bestIntf ? bestIntf->int_name : "NULL",
             get_linkcost_text(bestLinkToNeighbor->linkcost, false, &lqbuffer));
         }
 
@@ -1404,7 +1404,9 @@ static int CreateInterface(
     capturingSkfd = CreateCaptureSocket(ifName);
     if (capturingSkfd < 0)
     {
-      close(encapsulatingSkfd);
+      if (encapsulatingSkfd >= 0) {
+        close(encapsulatingSkfd);
+      }
       free(newIf);
       return 0;
     }
@@ -1419,8 +1421,9 @@ static int CreateInterface(
     listeningSkfd = CreateListeningSocket(ifName);
     if (listeningSkfd < 0)
     {
-      close(listeningSkfd);
-      close(encapsulatingSkfd); /* no problem if 'encapsulatingSkfd' is -1 */
+      if (encapsulatingSkfd >= 0) {
+        close(encapsulatingSkfd); /* no problem if 'encapsulatingSkfd' is -1 */
+      }
       free(newIf);
       return 0;
     }
@@ -1439,8 +1442,12 @@ static int CreateInterface(
   if (ioctl(ioctlSkfd, SIOCGIFHWADDR, &ifr) < 0)
   {
     BmfPError("ioctl(SIOCGIFHWADDR) error for interface \"%s\"", ifName);
-    close(capturingSkfd);
-    close(encapsulatingSkfd);
+    if (capturingSkfd >= 0) {
+      close(capturingSkfd);
+    }
+    if (encapsulatingSkfd >= 0) {
+      close(encapsulatingSkfd);
+    }
     free(newIf);
     return 0;
   }

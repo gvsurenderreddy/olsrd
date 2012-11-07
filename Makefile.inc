@@ -17,6 +17,15 @@ OPTIMIZE ?=
 # you need a recent enough gcc and the libmudflap installed
 MUDFLAP ?= 0
 
+# shows full compiler/linker calls if activated
+VERBOSE ?= 0
+
+ifeq ($(VERBOSE),0)
+MAKECMDPREFIX = @
+else
+MAKECMDPREFIX =
+endif
+
 # OS detection
 ifeq ($(OS),Windows_NT)
 OS := win32
@@ -95,6 +104,7 @@ WARNINGS +=	-Wsequence-point
 WARNINGS +=	-Wcast-align
 WARNINGS +=	-Wformat-security
 WARNINGS +=	-Wformat-y2k
+WARNINGS +=     -Werror=format-security
 WARNINGS +=	-Winit-self
 WARNINGS +=	-Wswitch-default
 WARNINGS +=	-Wsync-nand
@@ -214,6 +224,9 @@ CPPFLAGS +=	-DDEBUG
 CFLAGS +=	-ggdb
 else
 CPPFLAGS +=	-DNDEBUG
+ifeq ($(OPTIMIZE),)
+OPTIMIZE += -O2 -D_FORTIFY_SOURCE=2 
+endif
 endif
 ifeq ($(NO_DEBUG_MESSAGES),1)
 CPPFLAGS +=	-DNODEBUG
@@ -228,11 +241,13 @@ quote = $(subst .,\.,$(subst /,\/,$1))
 
 # fully automatic and working dependency generation
 %.d: %.c
-	@$(filter-out $(CCACHE),$(CC)) -M $(strip $(CPPFLAGS)) "$<" | sed -e '1s/\($(call quote,$(*F))\.o\)[ :]*/$(call quote,$(*D)/\1 $@: Makefile $(TOPDIR)$(if $(TOPDIR),/)Makefile.inc) /g' >"$@"
+	$(MAKECMDPREFIX)$(filter-out $(CCACHE),$(CC)) -M $(strip $(CPPFLAGS)) "$<" | sed -e '1s/\($(call quote,$(*F))\.o\)[ :]*/$(call quote,$(*D)/\1 $@: Makefile $(TOPDIR)$(if $(TOPDIR),/)Makefile.inc) /g' >"$@"
 
 %.o: %.c
+ifeq ($(VERBOSE),0)
 	@echo "[CC] $<"
-	@$(CC) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
+endif
+	$(MAKECMDPREFIX)$(CC) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
 
 # we always need the includes and defines
 # for legacy since now

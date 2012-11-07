@@ -326,6 +326,7 @@ set_loss_link_multiplier(struct link_entry *entry)
       break;
     }
   }
+  assert(cfg_inter);
 
   /* create a null address for comparison */
   memset(&null_addr, 0, sizeof(union olsr_ip_addr));
@@ -719,7 +720,7 @@ update_link_entry(const union olsr_ip_addr *local, const union olsr_ip_addr *rem
   }
 
   /* L_time = max(L_time, L_ASYM_time) */
-  if (entry->link_timer && (entry->link_timer->timer_clock < entry->ASYM_time)) {
+  if (entry->link_timer == NULL || (entry->link_timer->timer_clock < entry->ASYM_time)) {
     olsr_set_link_timer(entry, TIME_DUE(entry->ASYM_time));
   }
 
@@ -798,13 +799,13 @@ check_link_status(const struct hello_message *message, const struct interface *i
   return ret;
 }
 
+#ifndef NODEBUG
 void
 olsr_print_link_set(void)
 {
-#ifndef NODEBUG
   /* The whole function makes no sense without it. */
   struct link_entry *walker;
-  const int addrsize = olsr_cnf->ip_version == AF_INET ? 15 : 39;
+  const int addrsize = olsr_cnf->ip_version == AF_INET ? (INET_ADDRSTRLEN - 1) : (INET6_ADDRSTRLEN - 1);
 
   OLSR_PRINTF(0, "\n--- %s ---------------------------------------------------- LINKS\n\n", olsr_wallclock_string());
   OLSR_PRINTF(1, "%-*s  %-6s %-14s %s\n", addrsize, "IP address", "hyst", "      LQ      ", "ETX");
@@ -817,8 +818,8 @@ olsr_print_link_set(void)
     		(double)walker->L_link_quality, get_link_entry_text(walker, '/', &lqbuffer1), get_linkcost_text(walker->linkcost,
                                                                                                         false, &lqbuffer2));
   } OLSR_FOR_ALL_LINK_ENTRIES_END(walker);
-#endif /* NODEBUG */
 }
+#endif /* NODEBUG */
 
 /*
  * called for every LQ HELLO message.

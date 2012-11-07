@@ -29,7 +29,7 @@
 struct avl_tree gateway_tree;
 
 /** gateway cookie */
-static struct olsr_cookie_info *gw_mem_cookie = NULL;
+static struct olsr_cookie_info *gateway_entry_mem_cookie = NULL;
 
 /** the gateway netmask for the HNA */
 static uint8_t smart_gateway_netmask[sizeof(union olsr_ip_addr)];
@@ -50,8 +50,16 @@ static struct gateway_entry *current_ipv6_gw;
 static struct olsr_iptunnel_entry *v6gw_tunnel;
 
 /*
+ * Forward Declarations
+ */
+
+static void olsr_delete_gateway_tree_entry(struct gateway_entry * gw, uint8_t prefixlen, bool immediate);
+
+/*
  * Helper Functions
  */
+
+#define TUNNEL_NAME (olsr_cnf->ip_version == AF_INET ? TUNNEL_ENDPOINT_IF : TUNNEL_ENDPOINT_IF6)
 
 #define OLSR_IP_ADDR_2_HNA_PTR(mask, prefixlen) (((uint8_t *)mask) + ((prefixlen+7)/8))
 
@@ -138,7 +146,7 @@ static void cleanup_gateway_handler(void *ptr) {
 
   /* remove gateway entry */
   avl_delete(&gateway_tree, &gw->node);
-  olsr_cookie_free(gw_mem_cookie, gw);
+  olsr_cookie_free(gateway_entry_mem_cookie, gw);
 }
 
 /*
@@ -149,8 +157,8 @@ static void cleanup_gateway_handler(void *ptr) {
  * Initialize gateway system
  */
 int olsr_init_gateways(void) {
-  gw_mem_cookie = olsr_alloc_cookie("Gateway cookie", OLSR_COOKIE_TYPE_MEMORY);
-  olsr_cookie_set_memory_size(gw_mem_cookie, sizeof(struct gateway_entry));
+  gateway_entry_mem_cookie = olsr_alloc_cookie("gateway_entry_mem_cookie", OLSR_COOKIE_TYPE_MEMORY);
+  olsr_cookie_set_memory_size(gateway_entry_mem_cookie, sizeof(struct gateway_entry));
 
   avl_init(&gateway_tree, avl_comp_default);
 
@@ -164,15 +172,15 @@ int olsr_init_gateways(void) {
 
   refresh_smartgw_netmask();
 
-  if (olsr_os_init_iptunnel(olsr_cnf->ip_version == AF_INET ? TUNNEL_ENDPOINT_IF : TUNNEL_ENDPOINT_IF6)) {
+  /* initialize default gateway handler */
+  gw_handler = &gw_def_handler;
+  gw_handler->init();
+
+  if (olsr_os_init_iptunnel(TUNNEL_NAME)) {
     return 1;
   }
 
   olsr_add_ifchange_handler(smartgw_tunnel_monitor);
-
-  /* initialize default gateway handler */
-  gw_handler = &gw_def_handler;
-  gw_handler->init();
 
   return 0;
 }
@@ -181,20 +189,34 @@ int olsr_init_gateways(void) {
  * Cleanup gateway tunnel system
  */
 void olsr_cleanup_gateways(void) {
-  if (current_ipv4_gw) {
-    olsr_os_del_ipip_tunnel(v4gw_tunnel);
-  }
-  if (current_ipv6_gw) {
-    olsr_os_del_ipip_tunnel(v6gw_tunnel);
-  }
+  struct avl_node * avlnode = NULL;
 
   olsr_remove_ifchange_handler(smartgw_tunnel_monitor);
+
+  olsr_os_cleanup_iptunnel(TUNNEL_NAME);
+
+  /* remove all gateways in the gateway tree that are not the active gateway */
+  while ((avlnode = avl_walk_first(&gateway_tree))) {
+    struct gateway_entry* tree_gw = node2gateway(avlnode);
+    if ((tree_gw != olsr_get_inet_gateway(false)) && (tree_gw != olsr_get_inet_gateway(true))) {
+      olsr_delete_gateway_tree_entry(tree_gw, FORCE_DELETE_GW_ENTRY, true);
+    }
+  }
+
+  /* remove the active IPv4 gateway */
+  olsr_delete_gateway_tree_entry(olsr_get_inet_gateway(false), FORCE_DELETE_GW_ENTRY, true);
+
+  /* remove the active IPv6 gateway */
+  olsr_delete_gateway_tree_entry(olsr_get_inet_gateway(true), FORCE_DELETE_GW_ENTRY, true);
+
+  /* there should be no more gateways */
+  assert(!avl_walk_first(&gateway_tree));
 
   assert(gw_handler);
   gw_handler->cleanup();
   gw_handler = NULL;
 
-  olsr_os_cleanup_iptunnel(olsr_cnf->ip_version == AF_INET ? TUNNEL_ENDPOINT_IF : TUNNEL_ENDPOINT_IF6);
+  olsr_free_cookie(gateway_entry_mem_cookie);
 }
 
 /**
@@ -208,11 +230,11 @@ void olsr_trigger_inetgw_startup(void) {
 /**
  * Print debug information about gateway entries
  */
-void olsr_print_gateway_entries(void) {
 #ifndef NODEBUG
+void olsr_print_gateway_entries(void) {
   struct ipaddr_str buf;
   struct gateway_entry *gw;
-  const int addrsize = olsr_cnf->ip_version == AF_INET ? 15 : 39;
+  const int addrsize = olsr_cnf->ip_version == AF_INET ? (INET_ADDRSTRLEN - 1) : (INET6_ADDRSTRLEN - 1);
 
   OLSR_PRINTF(0, "\n--- %s ---------------------------------------------------- GATEWAYS\n\n", olsr_wallclock_string());
   OLSR_PRINTF(0, "%-*s %-6s %-9s %-9s %s\n",
@@ -231,8 +253,8 @@ void olsr_print_gateway_entries(void) {
         gw->downlink,
         gw->external_prefix.prefix_len == 0 ? "" : olsr_ip_prefix_to_string(&gw->external_prefix));
   } OLSR_FOR_ALL_GATEWAY_ENTRIES_END(gw)
-#endif /* NODEBUG */
 }
+#endif /* NODEBUG */
 
 /*
  * Tx Path Interface
@@ -322,11 +344,11 @@ bool olsr_is_smart_gateway(struct olsr_ip_prefix *prefix, union olsr_ip_addr *ma
  * @param seqno the sequence number of the HNA
  */
 void olsr_update_gateway_entry(union olsr_ip_addr *originator, union olsr_ip_addr *mask, int prefixlen, uint16_t seqno) {
+  uint8_t *ptr;
   struct gateway_entry *gw = node2gateway(avl_find(&gateway_tree, originator));
-  uint8_t *ptr = OLSR_IP_ADDR_2_HNA_PTR(mask, prefixlen);
 
   if (!gw) {
-    gw = olsr_cookie_malloc(gw_mem_cookie);
+    gw = olsr_cookie_malloc(gateway_entry_mem_cookie);
     gw->originator = *originator;
     gw->node.key = &gw->originator;
 
@@ -339,6 +361,7 @@ void olsr_update_gateway_entry(union olsr_ip_addr *originator, union olsr_ip_add
   /* keep new HNA seqno */
   gw->seqno = seqno;
 
+  ptr = OLSR_IP_ADDR_2_HNA_PTR(mask, prefixlen);
   if ((ptr[GW_HNA_FLAGS] & GW_HNA_FLAG_LINKSPEED) != 0) {
     gw->uplink = deserialize_gw_speed(ptr[GW_HNA_UPLINK]);
     gw->downlink = deserialize_gw_speed(ptr[GW_HNA_DOWNLINK]);
@@ -384,12 +407,34 @@ void olsr_update_gateway_entry(union olsr_ip_addr *originator, union olsr_ip_add
  *
  * @param originator
  * @param prefixlen
+ * @param immediate when set to true then the gateway is removed from the
+ * gateway tree immediately, else it is removed on a delayed schedule.
  */
-void olsr_delete_gateway_entry(union olsr_ip_addr *originator, uint8_t prefixlen) {
-  struct gateway_entry *gw = node2gateway(avl_find(&gateway_tree, originator));
+void olsr_delete_gateway_entry(union olsr_ip_addr *originator, uint8_t prefixlen, bool immediate) {
+  olsr_delete_gateway_tree_entry(node2gateway(avl_find(&gateway_tree, originator)), prefixlen, immediate);
+}
+
+/**
+ * Delete a gateway entry .
+ *
+ * @param gw a gateway entry from the gateway tree
+ * @param prefixlen
+ * @param immediate when set to true then the gateway is removed from the
+ * gateway tree immediately, else it is removed on a delayed schedule.
+ */
+static void olsr_delete_gateway_tree_entry(struct gateway_entry * gw, uint8_t prefixlen, bool immediate) {
   bool change = false;
 
-  if (gw && (gw->cleanup_timer == NULL || gw->ipv4 || gw->ipv6)) {
+  if (!gw) {
+    return;
+  }
+
+  if (immediate && gw->cleanup_timer) {
+    /* stop timer if we have to remove immediately */
+    olsr_set_timer(&gw->cleanup_timer, 0, 0, false, NULL, NULL, NULL);
+  }
+
+  if (gw->cleanup_timer == NULL || gw->ipv4 || gw->ipv6) {
     /* found a gw and it wasn't deleted yet */
 
     if (olsr_cnf->ip_version == AF_INET && prefixlen == 0) {
@@ -417,22 +462,30 @@ void olsr_delete_gateway_entry(union olsr_ip_addr *originator, uint8_t prefixlen
 
       /* cleanup gateway if necessary */
       if (current_ipv4_gw == gw) {
-        olsr_os_inetgw_tunnel_route(v4gw_tunnel->if_index, true, false);
-        olsr_os_del_ipip_tunnel(v4gw_tunnel);
+        if (v4gw_tunnel) {
+          olsr_os_inetgw_tunnel_route(v4gw_tunnel->if_index, true, false);
+          olsr_os_del_ipip_tunnel(v4gw_tunnel);
+          v4gw_tunnel = NULL;
+        }
 
         current_ipv4_gw = NULL;
-        v4gw_tunnel = NULL;
       }
       if (current_ipv6_gw == gw) {
-        olsr_os_inetgw_tunnel_route(v6gw_tunnel->if_index, false, false);
-        olsr_os_del_ipip_tunnel(v6gw_tunnel);
+        if (v6gw_tunnel) {
+          olsr_os_inetgw_tunnel_route(v6gw_tunnel->if_index, false, false);
+          olsr_os_del_ipip_tunnel(v6gw_tunnel);
+          v6gw_tunnel = NULL;
+        }
 
         current_ipv6_gw = NULL;
-        v6gw_tunnel = NULL;
       }
 
-      /* remove gateway entry on a delayed schedule */
-      olsr_set_timer(&gw->cleanup_timer, GW_CLEANUP_INTERVAL, 0, false, cleanup_gateway_handler, gw, NULL);
+      if (!immediate) {
+        /* remove gateway entry on a delayed schedule */
+        olsr_set_timer(&gw->cleanup_timer, GW_CLEANUP_INTERVAL, 0, false, cleanup_gateway_handler, gw, NULL);
+      } else {
+        cleanup_gateway_handler(gw);
+      }
     } else if (change) {
       assert(gw_handler);
       gw_handler->update(gw);
@@ -476,11 +529,7 @@ void olsr_trigger_gatewayloss_check(void) {
  * @return true if an error happened, false otherwise
  */
 bool olsr_set_inet_gateway(union olsr_ip_addr *originator, bool ipv4, bool ipv6) {
-  struct gateway_entry *entry;
-  struct gateway_entry *oldV4 = current_ipv4_gw;
-  struct gateway_entry *oldV6 = current_ipv6_gw;
-  struct olsr_iptunnel_entry *oldV4Tunnel = v4gw_tunnel;
-  struct olsr_iptunnel_entry *oldV6Tunnel = v6gw_tunnel;
+  struct gateway_entry *new_gw;
 
   ipv4 = ipv4 && (olsr_cnf->ip_version == AF_INET || olsr_cnf->use_niit);
   ipv6 = ipv6 && (olsr_cnf->ip_version == AF_INET6);
@@ -488,52 +537,47 @@ bool olsr_set_inet_gateway(union olsr_ip_addr *originator, bool ipv4, bool ipv6)
     return true;
   }
 
-  entry = node2gateway(avl_find(&gateway_tree, originator));
-  if (!entry) {
+  new_gw = node2gateway(avl_find(&gateway_tree, originator));
+  if (!new_gw) {
+    /* the originator is not in the gateway tree, we can't set it as gateway */
     return true;
   }
 
   /* handle IPv4 */
-  if (ipv4) {
-    current_ipv4_gw = NULL;
-    if (entry->ipv4 && (!entry->ipv4nat || olsr_cnf->smart_gw_allow_nat)) {
-      /* valid ipv4 gateway */
-      current_ipv4_gw = entry;
-      if (oldV4 != current_ipv4_gw) {
-        if ((v4gw_tunnel = olsr_os_add_ipip_tunnel(&current_ipv4_gw->originator, true)) != NULL) {
-          olsr_os_inetgw_tunnel_route(v4gw_tunnel->if_index, true, true);
-        } else {
-          /* adding the tunnel failed, we try again in the next cycle */
-          current_ipv4_gw = NULL;
-        }
-        if (oldV4 != NULL) {
-          olsr_os_del_ipip_tunnel(oldV4Tunnel);
-        }
+  if (ipv4 && new_gw->ipv4 && (!new_gw->ipv4nat || olsr_cnf->smart_gw_allow_nat) && current_ipv4_gw != new_gw) {
+    struct olsr_iptunnel_entry *new_v4gw_tunnel = olsr_os_add_ipip_tunnel(&new_gw->originator, true);
+    if (new_v4gw_tunnel) {
+      olsr_os_inetgw_tunnel_route(new_v4gw_tunnel->if_index, true, true);
+      if (v4gw_tunnel) {
+        olsr_os_del_ipip_tunnel(v4gw_tunnel);
+        v4gw_tunnel = NULL;
       }
+      current_ipv4_gw = new_gw;
+      v4gw_tunnel = new_v4gw_tunnel;
+    } else {
+      /* adding the tunnel failed, we try again in the next cycle */
+      ipv4 = false;
     }
   }
 
   /* handle IPv6 */
-  if (ipv6) {
-    current_ipv6_gw = NULL;
-    if (entry->ipv6) {
-      /* valid ipv6 gateway */
-      current_ipv6_gw = entry;
-      if (oldV6 != current_ipv6_gw) {
-        if ((v6gw_tunnel = olsr_os_add_ipip_tunnel(&current_ipv6_gw->originator, false)) != NULL) {
-          olsr_os_inetgw_tunnel_route(v6gw_tunnel->if_index, false, true);
-        } else {
-          /* adding the tunnel failed, we try again in the next cycle */
-          current_ipv6_gw = NULL;
-        }
-        if (oldV6 != NULL) {
-          olsr_os_del_ipip_tunnel(oldV6Tunnel);
-        }
-      }
-    }
+  if (ipv6 && new_gw->ipv6 && current_ipv6_gw != new_gw) {
+    struct olsr_iptunnel_entry *new_v6gw_tunnel = olsr_os_add_ipip_tunnel(&new_gw->originator, false);
+		if (new_v6gw_tunnel) {
+			olsr_os_inetgw_tunnel_route(new_v6gw_tunnel->if_index, false, true);
+			if (v6gw_tunnel) {
+				olsr_os_del_ipip_tunnel(v6gw_tunnel);
+				v6gw_tunnel = NULL;
+			}
+			current_ipv6_gw = new_gw;
+			v6gw_tunnel = new_v6gw_tunnel;
+		} else {
+			/* adding the tunnel failed, we try again in the next cycle */
+			ipv6 = false;
+		}
   }
 
-  return (ipv4 && current_ipv4_gw == NULL) || (ipv6 && current_ipv6_gw == NULL);
+  return !ipv4 && !ipv6;
 }
 
 /**

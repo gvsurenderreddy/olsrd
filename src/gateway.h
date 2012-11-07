@@ -132,7 +132,11 @@ struct olsr_gw_handler {
 int olsr_init_gateways(void);
 void olsr_cleanup_gateways(void);
 void olsr_trigger_inetgw_startup(void);
+#ifndef NODEBUG
 void olsr_print_gateway_entries(void);
+#else
+#define olsr_print_gateway_entries() do { } while(0)
+#endif
 
 /*
  * Tx Path Interface
@@ -152,7 +156,7 @@ void refresh_smartgw_netmask(void);
 
 bool olsr_is_smart_gateway(struct olsr_ip_prefix *prefix, union olsr_ip_addr *net);
 void olsr_update_gateway_entry(union olsr_ip_addr *originator, union olsr_ip_addr *mask, int prefixlen, uint16_t seqno);
-void olsr_delete_gateway_entry(union olsr_ip_addr *originator, uint8_t prefixlen);
+void olsr_delete_gateway_entry(union olsr_ip_addr *originator, uint8_t prefixlen, bool immediate);
 void olsr_trigger_gatewayloss_check(void);
 
 /*

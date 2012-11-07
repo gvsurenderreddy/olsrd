@@ -283,7 +283,7 @@ olsr_delete_tc_entry(struct tc_entry *tc)
 
   /* delete gateway if available */
 #ifdef __linux__
-  olsr_delete_gateway_entry(&tc->addr, FORCE_DELETE_GW_ENTRY);
+  olsr_delete_gateway_entry(&tc->addr, FORCE_DELETE_GW_ENTRY, false);
 #endif /* __linux__ */
   /*
    * Delete the rt_path for ourselves.
@@ -682,13 +682,13 @@ olsr_lookup_tc_edge(struct tc_entry *tc, union olsr_ip_addr *edge_addr)
 /**
  * Print the topology table to stdout
  */
+#ifndef NODEBUG
 void
 olsr_print_tc_table(void)
 {
-#ifndef NODEBUG
   /* The whole function makes no sense without it. */
   struct tc_entry *tc;
-  const int ipwidth = olsr_cnf->ip_version == AF_INET ? 15 : 39;
+  const int ipwidth = olsr_cnf->ip_version == AF_INET ? (INET_ADDRSTRLEN - 1) : (INET6_ADDRSTRLEN - 1);
 
   OLSR_PRINTF(1, "\n--- %s ------------------------------------------------- TOPOLOGY\n\n" "%-*s %-*s %-14s  %s\n",
               olsr_wallclock_string(), ipwidth, "Source IP addr", ipwidth, "Dest IP addr", "      LQ      ", "ETX");
@@ -705,8 +705,8 @@ olsr_print_tc_table(void)
 
     } OLSR_FOR_ALL_TC_EDGE_ENTRIES_END(tc, tc_edge);
   } OLSR_FOR_ALL_TC_ENTRIES_END(tc);
-#endif /* NODEBUG */
 }
+#endif /* NODEBUG */
 
 /*
  * calculate the border IPs of a tc edge set according to the border flags
@@ -725,7 +725,7 @@ olsr_calculate_tc_border(uint8_t lower_border, union olsr_ip_addr *lower_border_
     return 0;
   }
   if (lower_border == 0xff) {
-    memset(lower_border_ip, 0, sizeof(lower_border_ip));
+    memset(lower_border_ip, 0, sizeof(*lower_border_ip));
   } else {
     int i;
 
@@ -738,7 +738,7 @@ olsr_calculate_tc_border(uint8_t lower_border, union olsr_ip_addr *lower_border_
   }
 
   if (upper_border == 0xff) {
-    memset(upper_border_ip, 0xff, sizeof(upper_border_ip));
+    memset(upper_border_ip, 0xff, sizeof(*upper_border_ip));
   } else {
     int i;
 

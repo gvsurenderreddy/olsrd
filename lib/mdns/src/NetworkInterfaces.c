@@ -262,9 +262,8 @@ CreateRouterElectionSocket(const char *ifName)
 	errno = 0;
 	if (setsockopt(rxSocket, ipProtoSetting, ipMcLoopSetting, &mcLoopValue,
 			sizeof(mcLoopValue)) < 0) {
-		BmfPError("Could not %s multicast loopback on the"
-			" receive socket for interface %s", mcLoopValue ? "enable"
-				: "disable", ifName);
+		BmfPError("Could not enable multicast loopback on the"
+			" receive socket for interface %s", ifName);
 		goto bail;
 	}
 
@@ -272,9 +271,13 @@ CreateRouterElectionSocket(const char *ifName)
 	 * ADD_MEMBERSHIP option must be called for each local interface over
 	 * which the multicast datagrams are to be received. */
 	if (ipFamilySetting == AF_INET) {
+		static const char * mc4Addr = "224.0.0.2";
 		struct ip_mreq mc_settings;
 		(void) memset(&mc_settings, 0, sizeof(mc_settings));
-		inet_pton(AF_INET, "224.0.0.2", &mc_settings.imr_multiaddr.s_addr);
+		if (inet_pton(AF_INET, mc4Addr, &mc_settings.imr_multiaddr.s_addr) != 1) {
+			BmfPError("Could not convert ipv4 multicast address %s", mc4Addr);
+			goto bail;
+		}
 		(void) memset(&req, 0, sizeof(struct ifreq));
 		strncpy(req.ifr_name, ifName, IFNAMSIZ - 1);
 		req.ifr_name[IFNAMSIZ -1] = '\0';	/* Ensure null termination */
@@ -292,9 +295,13 @@ CreateRouterElectionSocket(const char *ifName)
 			goto bail;
 		}
 	} else {
+		static const char * mc6Addr = "ff02::2";
 		struct ipv6_mreq mc6_settings;
 		(void) memset(&mc6_settings, 0, sizeof(mc6_settings));
-		inet_pton(AF_INET6, "ff02::2", &mc6_settings.ipv6mr_multiaddr.s6_addr);
+		if (inet_pton(AF_INET6, mc6Addr, &mc6_settings.ipv6mr_multiaddr.s6_addr) != 1) {
+			BmfPError("Could not convert ipv6 multicast address %s", mc6Addr);
+			goto bail;
+		}
 		mc6_settings.ipv6mr_interface = ifIndex;
 		errno = 0;
 		if (setsockopt(rxSocket, ipProtoSetting, ipAddMembershipSetting,
@@ -393,9 +400,8 @@ static int CreateHelloSocket(const char *ifName) {
 	errno = 0;
 	if (setsockopt(txSocket, ipProtoSetting, ipMcLoopSetting, &mcLoopValue,
 			sizeof(mcLoopValue)) < 0) {
-		BmfPError("Could not %s multicast loopback on the"
-			" transmit socket for interface %s", mcLoopValue ? "enable"
-				: "disable", ifName);
+		BmfPError("Could not disable multicast loopback on the"
+			" transmit socket for interface %s", ifName);
 		goto bail;
 	}
 
@@ -466,10 +472,15 @@ CreateInterface(const char *ifName, struct interface *olsrIntf)
     electionSkfd = CreateRouterElectionSocket(ifName);
     helloSkfd = CreateHelloSocket(ifName);
     if (capturingSkfd < 0 || electionSkfd < 0 || helloSkfd < 0) {
-      close(encapsulatingSkfd);
-      close(capturingSkfd);
-      close(electionSkfd);
-      close(helloSkfd);
+      if (capturingSkfd >= 0) {
+        close(capturingSkfd);
+      }
+      if (electionSkfd >= 0) {
+        close(electionSkfd);
+      }
+      if (helloSkfd >= 0) {
+        close(helloSkfd);
+      }
       free(newIf);
       return 0;
     }
@@ -487,10 +498,15 @@ CreateInterface(const char *ifName, struct interface *olsrIntf)
   ifr.ifr_name[IFNAMSIZ - 1] = '\0';    /* Ensures null termination */
   if (ioctl(ioctlSkfd, SIOCGIFHWADDR, &ifr) < 0) {
     BmfPError("ioctl(SIOCGIFHWADDR) error for interface \"%s\"", ifName);
-    close(capturingSkfd);
-    close(encapsulatingSkfd);
-    close(electionSkfd);
-    close(helloSkfd);
+    if (capturingSkfd >= 0) {
+      close(capturingSkfd);
+    }
+    if (electionSkfd >= 0) {
+      close(electionSkfd);
+    }
+    if (helloSkfd >= 0) {
+      close(helloSkfd);
+    }
     free(newIf);
     return 0;
   }

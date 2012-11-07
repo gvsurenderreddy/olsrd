@@ -427,7 +427,10 @@ int main(int argc, char *argv[]) {
     olsr_syslog(OLSR_LOG_ERR, "rtnetlink socket: %m");
     olsr_exit(__func__, 0);
   }
-  fcntl(olsr_cnf->rtnl_s, F_SETFL, O_NONBLOCK);
+
+  if (fcntl(olsr_cnf->rtnl_s, F_SETFL, O_NONBLOCK)) {
+    olsr_syslog(OLSR_LOG_INFO, "rtnetlink could not be set to nonblocking");
+  }
 
   if ((olsr_cnf->rt_monitor_socket = rtnetlink_register_socket(RTMGRP_LINK)) < 0) {
     olsr_syslog(OLSR_LOG_ERR, "rtmonitor socket: %m");
@@ -844,7 +847,7 @@ static void print_usage(bool error) {
         "  [-midint <mid interval (secs)>] [-hnaint <hna interval (secs)>]\n"
         "  [-T <Polling Rate (secs)>] [-nofork] [-hemu <ip_address>]\n"
         "  [-lql <LQ level>] [-lqa <LQ aging factor>]\n",
-        error ? "An error occured somwhere between your keyboard and your chair!\n" : "");
+        error ? "Error in command line parameters!\n" : "");
 }
 
 /**
@@ -871,12 +874,8 @@ int set_default_ifcnfs(struct olsr_if *ifs, struct if_config_options *cnf) {
 
 #define NEXT_ARG do { argv++;argc--; } while (0)
 #define CHECK_ARGC do { if(!argc) { \
-      if((argc - 1) == 1){ \
-      fprintf(stderr, "Error parsing command line options!\n"); \
-      } else { \
-      argv--; \
-      fprintf(stderr, "You must provide a parameter when using the %s switch!\n", *argv); \
-     } \
+     argv--; \
+     fprintf(stderr, "You must provide a parameter when using the %s switch!\n", *argv); \
      olsr_exit(__func__, EXIT_FAILURE); \
      } } while (0)
 
@@ -1137,7 +1136,8 @@ static int olsr_process_arguments(int argc, char *argv[],
 
       ifa->cnf = get_default_if_config();
       ifa->host_emul = true;
-      memcpy(&ifa->hemu_ip, &in, sizeof(union olsr_ip_addr));
+      memset(&ifa->hemu_ip, 0, sizeof(ifa->hemu_ip));
+      memcpy(&ifa->hemu_ip, &in, sizeof(in));
       cnf->host_emul = true;
 
       continue;

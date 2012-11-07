@@ -137,25 +137,22 @@ static int writeToProc(const char *file, char *old, char value) {
 
   if (read(fd, &rv, 1) != 1) {
     OLSR_PRINTF(0, "Error, cannot read proc entry %s: %s (%d)\n", file, strerror(errno), errno);
-    return -1;
+    goto writeToProcError;
   }
 
   if (rv != value && value != 0) {
     if (lseek(fd, SEEK_SET, 0) == -1) {
       OLSR_PRINTF(0, "Error, cannot rewind proc entry %s: %s (%d)\n", file, strerror(errno), errno);
-      return -1;
+      goto writeToProcError;
     }
 
     if (write(fd, &value, 1) != 1) {
       OLSR_PRINTF(0, "Error, cannot write proc entry %s: %s (%d)\n", file, strerror(errno), errno);
-      return -1;
+      goto writeToProcError;
     }
   }
 
-  if (close(fd) != 0) {
-    OLSR_PRINTF(0, "Error while closing proc entry %s: %s (%d)\n", file, strerror(errno), errno);
-    return -1;
-  }
+  close(fd);
 
   if (old) {
     *old = rv;
@@ -165,6 +162,10 @@ static int writeToProc(const char *file, char *old, char value) {
     olsr_syslog(OLSR_LOG_INFO, "Writing '%c' (was %c) to %s", value, rv, file);
   }
   return 0;
+
+writeToProcError:
+  close (fd);
+  return -1;
 }
 
 /* write new value to proc file if current value is different*/
@@ -633,7 +634,7 @@ get_ipv6_address(char *ifname, struct sockaddr_in6 *saddr6, struct olsr_ip_prefi
 
   if ((f = fopen(PATH_PROCNET_IFINET6, "r")) != NULL) {
     while (fscanf
-           (f, "%4s%4s%4s%4s%4s%4s%4s%4s %x %02x %02x %02x %20s\n", addr6p[0], addr6p[1], addr6p[2], addr6p[3], addr6p[4],
+           (f, "%4s%4s%4s%4s%4s%4s%4s%4s %x %02x %02x %02x %16s\n", addr6p[0], addr6p[1], addr6p[2], addr6p[3], addr6p[4],
             addr6p[5], addr6p[6], addr6p[7], &if_idx, &plen, &scope, &dad_status, devname) != EOF) {
       if (!strcmp(devname, ifname)) {
         bool isNetWide = false;
@@ -642,7 +643,9 @@ get_ipv6_address(char *ifname, struct sockaddr_in6 *saddr6, struct olsr_ip_prefi
         OLSR_PRINTF(5, "\tinet6 addr: %s\n", addr6);
         OLSR_PRINTF(5, "\tScope: %d\n", scope);
 
-        inet_pton(AF_INET6, addr6, &tmp_ip.v6);
+        if (inet_pton(AF_INET6, addr6, &tmp_ip.v6)) {
+          continue;
+        }
 
         isNetWide = (scope != IPV6_ADDR_LOOPBACK) && (scope != IPV6_ADDR_LINKLOCAL) && (scope != IPV6_ADDR_SITELOCAL);
 

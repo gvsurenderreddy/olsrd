@@ -865,7 +865,7 @@ decap_namemsg(struct name *from_packet, struct name_entry **to, bool * this_tabl
   //if not yet known entry
   tmp = olsr_malloc(sizeof(struct name_entry), "new name_entry");
   tmp->type = ntohs(from_packet->type);
-  tmp->len = len_of_name > MAX_NAME ? MAX_NAME : ntohs(from_packet->len);
+  tmp->len = ntohs(from_packet->len);
   tmp->name = olsr_malloc(tmp->len + 1, "new name_entry name");
   tmp->ip = from_packet->ip;
   strscpy(tmp->name, name, tmp->len + 1);
@@ -1010,7 +1010,7 @@ send_sighup_to_pidfile(char *pid_file)
   fd = open(pid_file, O_RDONLY);
   if (fd < 0) {
     OLSR_PRINTF(2, "NAME PLUGIN: can't open file %s\n", pid_file);
-    return;
+    goto out;
   }
 
   while (i < 19) {
@@ -1021,15 +1021,17 @@ send_sighup_to_pidfile(char *pid_file)
       i += result;
     } else if (errno != EINTR && errno != EAGAIN) {
       OLSR_PRINTF(2, "NAME PLUGIN: can't read file %s\n", pid_file);
-      return;
+      goto out;
     }
   }
   line[i] = 0;
   close(fd);
+  fd = -1;
+
   ipid = strtol(line, &endptr, 0);
   if (endptr == line) {
     OLSR_PRINTF(2, "NAME PLUGIN: invalid pid at file %s\n", pid_file);
-    return;
+    goto out;;
   }
 
   result = kill(ipid, SIGHUP);
@@ -1039,6 +1041,9 @@ send_sighup_to_pidfile(char *pid_file)
     OLSR_PRINTF(2, "NAME PLUGIN: failed to send SIGHUP to pid %i\n", ipid);
   }
 
+  out: if (fd >= 0) {
+    close(fd);
+  }
 }
 #endif /* _WIN32 */
 
@@ -1087,8 +1092,8 @@ write_hosts_file(void)
       fprintf(hosts, "### contents from '%s' ###\n\n", my_add_hosts);
       while ((c = getc(add_hosts)) != EOF)
         putc(c, hosts);
+      fclose(add_hosts);
     }
-    fclose(add_hosts);
     fprintf(hosts, "\n### olsr names ###\n\n");
   }
   // write own names
@@ -1600,7 +1605,7 @@ lookup_defhna_latlon(union olsr_ip_addr *ip)
   struct avl_node *rt_tree_node;
   struct olsr_ip_prefix prefix;
 
-  memset(ip, 0, sizeof(ip));
+  memset(ip, 0, sizeof(*ip));
   memset(&prefix, 0, sizeof(prefix));
 
   if (NULL != (rt_tree_node = avl_find(&routingtree, &prefix))) {
