@@ -176,6 +176,10 @@ LIBS +=		-lmudflapth
 endif
 LIBS +=		$(OS_LIB_PTHREAD)
 
+ifeq ($(OS),linux)
+LIBS +=		-lnl -lnl-genl -lnl-route
+endif
+
 # extra options from the outside
 CPPFLAGS +=	$(EXTRA_CPPFLAGS)
 
@@ -216,7 +220,7 @@ CPPFLAGS +=	-DNODEBUG
 endif
 
 ifeq ($(OS),linux)
-CPPFLAGS+=-DHTTPINFO_PUD -I$(TOPDIR)/lib -I$(TOPDIR)/lib/pud/nmealib/include -I$(TOPDIR)/lib/pud/wireformat/include
+CPPFLAGS+=-DLINUX_NL80211 -DHTTPINFO_PUD -I$(TOPDIR)/lib -I$(TOPDIR)/lib/pud/nmealib/include -I$(TOPDIR)/lib/pud/wireformat/include
 endif
 
 # a make function to quote "/" and "."
