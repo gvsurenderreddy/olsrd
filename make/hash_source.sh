@@ -12,9 +12,11 @@ verbose="$3"
 
 
 md5Command="md5sum"
+mktempCommand="mktemp"
 osName="$(uname)"
 if [ "x$osName" = "xDarwin" ] ; then
   md5Command="md5"
+  mktempCommand="mktemp -t olsrd"
 fi
 
 
@@ -27,7 +29,7 @@ hostName="$(hostname)"
 buildDate="$(date +"%Y-%m-%d %H:%M:%S")"
 
 
-tmpBuildDataTxt="$(mktemp)"
+tmpBuildDataTxt="$(${mktempCommand})"
 cat > "$tmpBuildDataTxt" << EOF
 const char olsrd_version[] = "olsr.org - $version-git_$gitSha-hash_$sourceHash";
 const char build_host[]    = "$hostName";
