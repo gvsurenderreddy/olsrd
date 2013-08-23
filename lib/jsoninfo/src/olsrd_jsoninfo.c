@@ -1283,7 +1283,7 @@ send_info(unsigned int send_what, int the_socket)
   abuf_init(&abuf, 32768);
 
  // only add if outputing JSON
-  if (send_what & SIW_ALL) abuf_appendf(&abuf, "{\n");
+  if (send_what & SIW_ALL) abuf_appendf(&abuf, "{");
 
   if ((send_what & SIW_LINKS) == SIW_LINKS) ipc_print_links(&abuf);
   if ((send_what & SIW_NEIGHBORS) == SIW_NEIGHBORS) ipc_print_neighbors(&abuf);
